@@ -13,15 +13,15 @@ DATA_ROOT = BASE / "tm_aarya_rec1"
 FRAMES_PER_SECOND = 2.0
 dt = 1.0 / FRAMES_PER_SECOND
 
-#Constants
-c = 0.12048e-6       # Calibration factor (m/px)
-dc = 0.003e-6        # Calibration uncertainty
-T = 296.5            # Temperature (K)
-dT = 0.5             # Temperature uncertainty
-eta = 1.00e-3        # Viscosity of water (Pa*s)
-deta = 0.05e-3       # Viscosity uncertainty
-radius = 0.95e-6     # Bead radius in meters
-dradius = 0.05e-6    # Radius uncertainty
+# Constants for error propagation and final calculations
+c = 0.12048e-6 # Calibration factor (m/px)
+dc = 0.003e-6 # Calibration uncertainty
+T = 296.5 # Temperature (K)
+dT = 0.5 # Temperature uncertainty
+eta = 1.00e-3 # Viscosity of water (Pa*s)
+deta = 0.05e-3 # Viscosity uncertainty
+radius = 0.95e-6 # Bead radius in meters
+dradius = 0.05e-6 # Radius uncertainty
 
 def format_measurement(val, err):
     """Formats a value and uncertainty to 1 significant figure of error."""
@@ -42,11 +42,13 @@ def format_measurement(val, err):
         return f"{val_rounded:.{decimals}f} ± {err_rounded:.{decimals}f}"
 
 def load_xy(path: Path):
+    '''Loads X and Y columns from the txt file, skipping the first 2 rows and dropping NaNs.'''
     df = pd.read_csv(path, sep="\t", skiprows=2, header=None, names=["X", "Y"])
     return df.dropna()["X"].to_numpy(float), df.dropna()["Y"].to_numpy(float)
 
 # Theoretical Rayleigh PDF (Equation 18 from manual)
 def rayleigh_pdf(r, D):
+    '''PDF for step length r given diffusion coefficient D and time interval dt.'''
     return (r / (2 * D * dt)) * np.exp(-r**2 / (4 * D * dt))
 
 def main():
@@ -58,13 +60,12 @@ def main():
         x, y = load_xy(p)
         if len(x) < 2: continue
         
-        # Calculate distance between consecutive frames (lag = 1)
+        # distance between consecutive frames (lag = 1)
         dx = x[1:] - x[:-1]
         dy = y[1:] - y[:-1]
         r_px = np.sqrt(dx**2 + dy**2)
         
-        # Filter out tracking glitches ---
-        # Keep only steps smaller than 30 pixels
+        # Filter out tracking glitches: keep only steps smaller than 30 pixels (within reason)
         valid_steps = r_px[r_px < 30] 
         
         all_r_px.extend(valid_steps)
@@ -76,30 +77,30 @@ def main():
     all_r_m = all_r_px * c
 
     # 2. Histogram Data
-    # We use density=True so the area under the histogram equals 1, so we can fit a Probability Density Function
+    # Use density=True so the area under the histogram equals 1, so we can fit a Probability Density Function
     hist_values, bin_edges = np.histogram(all_r_m, bins=30, density=True)
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
 
-    # --- METHOD A: SciPy Curve Fit ---
+    #METHOD 1: SciPy curve fit
     popt, pcov = curve_fit(rayleigh_pdf, bin_centers, hist_values, p0=[1e-12])
     D_fit = popt[0]
     dD_fit = np.sqrt(np.diag(pcov))[0]
     
-    # Calculate k and propagate error for the Curve Fit
+    # Get k and propagate error for the curve fit
     k_fit = (6 * np.pi * eta * radius * D_fit) / T
     rel_err_k_fit = np.sqrt( (deta/eta)**2 + (dradius/radius)**2 + (dD_fit/D_fit)**2 + (dT/T)**2 )
     dk_fit = k_fit * rel_err_k_fit
 
-    # Format the Curve Fit strings
+    # Format curve fit strings
     D_fit_str = format_measurement(D_fit, dD_fit)
     k_fit_str = format_measurement(k_fit, dk_fit)
 
-    # --- METHOD B: Maximum Likelihood Estimate (MLE) ---
-    # Equation 19 from manual: 2Dt = (1/2N) * sum(r^2) -> D = sum(r^2) / (4 * N * t)
+    # METHOD 2:MLE
+    # Equation 19 from manual
     mean_sq_r = np.mean(all_r_m**2)
     D_mle = mean_sq_r / (4 * dt)
     
-    # Error Propagation for MLE
+    # Error propogation for MLE
     std_sq_r_px = np.std(all_r_px**2)
     err_mean_sq_r_px = std_sq_r_px / np.sqrt(N_steps) # Standard Error of the Mean for r^2
     
@@ -124,7 +125,7 @@ def main():
     # Smooth x values for drawing curves
     r_smooth = np.linspace(0, max(all_r_m), 200)
     
-    #  Curve Fit
+    #  Curve fit
     plt.plot(r_smooth, rayleigh_pdf(r_smooth, D_fit), 'r--', linewidth=2, label=f'Curve Fit D: {D_fit:.2e} m²/s')
     
     #  MLE
@@ -146,15 +147,15 @@ def main():
 
 
 
-    # --- TERMINAL OUTPUT ---
-    print(f"\n--- PART 2: STEP DISTRIBUTION RESULTS ---")
-    print(f"Total steps analyzed: {N_steps}")
+    # Terminal outputs
+    print(f"\nStep Distribution Results:---")
+    print(f"Total steps: {N_steps}")
     
-    print(f"\nMethod A (Curve Fit):")
+    print(f"\nMethod 1 (Curve fit):")
     print(f"  D_fit = {D_fit_str} m²/s")
     print(f"  k_fit = {k_fit_str} J/K")
     
-    print(f"\nMethod B (Maximum Likelihood Estimate - Preferred):")
+    print(f"\nMethod B (MLE):")
     print(f"  D_MLE = {D_mle_str} m²/s")
     print(f"  k_MLE = {k_mle_str} J/K")
 
